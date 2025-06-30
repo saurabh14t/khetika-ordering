@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
-// Use environment variable only - no hardcoded keys
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+// Check if API key is available
+const apiKey = process.env.OPENAI_API_KEY
+const openai = apiKey ? new OpenAI({ apiKey }) : null
 
 // Enhanced fallback responses for common questions when API is unavailable
 const fallbackResponses: { [key: string]: string } = {
@@ -119,8 +118,18 @@ Be helpful, concise, and provide actionable information. If you don't have acces
 
     try {
       console.log('Attempting OpenAI API call...')
+      
+      // Check if OpenAI client is available
+      if (!openai) {
+        const fallbackResponse = getFallbackResponse(lastUserMessage)
+        return NextResponse.json({
+          role: 'assistant',
+          content: `${fallbackResponse}\n\n💡 **Note**: OpenAI API key not configured. Please add OPENAI_API_KEY to your environment variables for real-time AI responses.`,
+        })
+      }
+      
       const response = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4o-mini', // Better limits: 15,000 TPM, 500 RPM, 10,000 RPD
         messages: [
           { role: 'system', content: systemPrompt },
           ...messages

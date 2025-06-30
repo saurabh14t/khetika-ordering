@@ -40,15 +40,20 @@ CREATE TABLE inventory (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Create orders table
+-- Create orders table with JSON items storage
 CREATE TABLE orders (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    customer_id UUID REFERENCES customers(id),
+    order_number VARCHAR(100) UNIQUE NOT NULL,
     customer_name VARCHAR(255) NOT NULL,
-    order_date DATE NOT NULL,
+    customer_email VARCHAR(255) NOT NULL,
+    customer_phone VARCHAR(50) NOT NULL,
+    items JSONB NOT NULL DEFAULT '[]',
+    total_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'shipped', 'delivered', 'cancelled')),
-    total DECIMAL(10,2) NOT NULL,
-    items_count INTEGER NOT NULL DEFAULT 0,
+    payment_status VARCHAR(20) DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid', 'failed')),
+    order_date DATE NOT NULL,
+    delivery_date DATE,
+    notes TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -70,9 +75,11 @@ CREATE INDEX idx_customers_status ON customers(status);
 CREATE INDEX idx_inventory_sku ON inventory(sku);
 CREATE INDEX idx_inventory_category ON inventory(category);
 CREATE INDEX idx_inventory_status ON inventory(status);
-CREATE INDEX idx_orders_customer_id ON orders(customer_id);
+CREATE INDEX idx_orders_order_number ON orders(order_number);
+CREATE INDEX idx_orders_customer_email ON orders(customer_email);
 CREATE INDEX idx_orders_status ON orders(status);
-CREATE INDEX idx_orders_date ON orders(order_date);
+CREATE INDEX idx_orders_order_date ON orders(order_date);
+CREATE INDEX idx_orders_payment_status ON orders(payment_status);
 CREATE INDEX idx_order_items_order_id ON order_items(order_id);
 
 -- Create function to update inventory status based on quantity
@@ -104,17 +111,17 @@ BEGIN
     IF TG_OP = 'INSERT' THEN
         UPDATE customers 
         SET total_orders = total_orders + 1,
-            total_spent = total_spent + NEW.total,
+            total_spent = total_spent + NEW.total_amount,
             last_order = NEW.order_date,
             updated_at = NOW()
-        WHERE id = NEW.customer_id;
+        WHERE email = NEW.customer_email;
     ELSIF TG_OP = 'UPDATE' THEN
         -- Handle status changes that might affect customer stats
         IF OLD.status != NEW.status AND NEW.status = 'delivered' THEN
             UPDATE customers 
-            SET total_spent = total_spent + NEW.total,
+            SET total_spent = total_spent + NEW.total_amount,
                 updated_at = NOW()
-            WHERE id = NEW.customer_id;
+            WHERE email = NEW.customer_email;
         END IF;
     END IF;
     RETURN NEW;
@@ -149,14 +156,26 @@ INSERT INTO inventory (name, sku, category, quantity, min_quantity, price, statu
 ('Bluetooth Headphones', 'BH-BT-001', 'Accessories', 20, 10, 79.99, 'in-stock'),
 ('Tablet 10"', 'TAB-10-001', 'Electronics', 6, 3, 299.99, 'in-stock');
 
--- Sample orders
-INSERT INTO orders (customer_id, customer_name, order_date, status, total, items_count) VALUES
-((SELECT id FROM customers WHERE email = 'john.doe@email.com'), 'John Doe', '2024-01-15', 'delivered', 299.99, 3),
-((SELECT id FROM customers WHERE email = 'jane.smith@email.com'), 'Jane Smith', '2024-01-14', 'shipped', 149.50, 2),
-((SELECT id FROM customers WHERE email = 'bob.johnson@email.com'), 'Bob Johnson', '2024-01-13', 'processing', 89.99, 1),
-((SELECT id FROM customers WHERE email = 'rajesh.kumar@email.com'), 'Rajesh Kumar', '2024-01-12', 'pending', 199.99, 4),
-((SELECT id FROM customers WHERE email = 'priya.sharma@email.com'), 'Priya Sharma', '2024-01-11', 'delivered', 179.98, 2),
-((SELECT id FROM customers WHERE email = 'john.doe@email.com'), 'John Doe', '2024-01-10', 'delivered', 399.99, 1);
+-- Sample orders with JSON items
+INSERT INTO orders (order_number, customer_name, customer_email, customer_phone, items, total_amount, status, payment_status, order_date, notes) VALUES
+('ORD-20240115-001', 'John Doe', 'john.doe@email.com', '+91 98765 43210', 
+ '[{"product_name": "Laptop Pro X1", "quantity": 1, "unit_price": 1299.99, "total_price": 1299.99}, {"product_name": "Wireless Mouse", "quantity": 2, "unit_price": 29.99, "total_price": 59.98}]', 
+ 1359.97, 'delivered', 'paid', '2024-01-15', 'Priority delivery requested'),
+('ORD-20240114-001', 'Jane Smith', 'jane.smith@email.com', '+91 98765 43211', 
+ '[{"product_name": "Mechanical Keyboard", "quantity": 1, "unit_price": 89.99, "total_price": 89.99}, {"product_name": "Bluetooth Headphones", "quantity": 1, "unit_price": 79.99, "total_price": 79.99}]', 
+ 169.98, 'shipped', 'paid', '2024-01-14', 'Gift wrapping required'),
+('ORD-20240113-001', 'Bob Johnson', 'bob.johnson@email.com', '+91 98765 43212', 
+ '[{"product_name": "Webcam HD", "quantity": 1, "unit_price": 149.99, "total_price": 149.99}]', 
+ 149.99, 'processing', 'pending', '2024-01-13', 'Standard delivery'),
+('ORD-20240112-001', 'Rajesh Kumar', 'rajesh.kumar@email.com', '+91 98765 43214', 
+ '[{"product_name": "Tablet 10\"", "quantity": 1, "unit_price": 299.99, "total_price": 299.99}]', 
+ 299.99, 'pending', 'pending', '2024-01-12', 'Corporate order'),
+('ORD-20240111-001', 'Priya Sharma', 'priya.sharma@email.com', '+91 98765 43215', 
+ '[{"product_name": "Monitor 24\"", "quantity": 1, "unit_price": 199.99, "total_price": 199.99}, {"product_name": "USB Cable", "quantity": 1, "unit_price": 9.99, "total_price": 9.99}]', 
+ 209.98, 'delivered', 'paid', '2024-01-11', 'Home office setup'),
+('ORD-20240110-001', 'John Doe', 'john.doe@email.com', '+91 98765 43210', 
+ '[{"product_name": "Laptop Pro X1", "quantity": 1, "unit_price": 1299.99, "total_price": 1299.99}]', 
+ 1299.99, 'delivered', 'paid', '2024-01-10', 'Replacement order');
 
 -- Sample order items
 INSERT INTO order_items (order_id, inventory_id, product_name, quantity, price) VALUES
